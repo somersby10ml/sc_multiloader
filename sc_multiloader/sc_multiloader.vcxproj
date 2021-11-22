@@ -144,9 +144,6 @@
     <ClCompile Include="sc_multiloader.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="cpp.hint" />
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="api.h" />
     <ClInclude Include="function.h" />
     <ClInclude Include="resource.h" />
