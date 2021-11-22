@@ -23,9 +23,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="cpp.hint" />
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="api.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
