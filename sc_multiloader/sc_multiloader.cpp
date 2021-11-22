@@ -15,67 +15,107 @@
 #include "function.h"
 
 pZwQueryInformationProcess ZwQueryInformationProcess;
+pZwQuerySystemInformation ZwQuerySystemInformation;
 pNtQueryObject NtQueryObject;
-TCHAR sName[] = _T("Starcraft Check For Other Instances");
+WCHAR sName[] = L"Starcraft Check For Other Instances";
+
+DWORD EnableNTPrivilege(LPCTSTR szPrivilege, DWORD dwState) {
+	DWORD                   dwRtn = 0;
+	HANDLE                  hToken;
+	LUID                    luid;
+	TOKEN_PRIVILEGES 		TP;
+	if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
+		if (LookupPrivilegeValue(NULL, szPrivilege, &luid)) {
+			TP.Privileges[0].Attributes = dwState;
+			TP.PrivilegeCount = 1;
+			TP.Privileges[0].Luid = luid;
+			if (AdjustTokenPrivileges(hToken, FALSE, &TP, sizeof(TOKEN_PRIVILEGES), NULL, NULL))
+				dwRtn = TP.Privileges[0].Attributes;
+		}
+		CloseHandle(hToken);
+	}
+	return dwRtn;
+}
 
 bool closeHandle(DWORD dwProcessId) {
-	PPROCESS_HANDLE_SNAPSHOT_INFORMATION pInformation;
+	SYSTEM_HANDLE_INFORMATION* pInformation;
 
-	LPBYTE lpBuffer = new BYTE[0x8000];
-	DWORD dwBufferSize = 0x8000;
+	//LPBYTE system_handle_buffer = new BYTE[0x8000];
+	std::vector<BYTE> system_handle_buffer;
+	std::vector<BYTE> name_buffer;
+	std::vector<BYTE> type_buffer;
 
-	LPBYTE pObject = new BYTE[0x8000];
-	DWORD dwObjectSize = 0x8000;
+	//LPBYTE name_buffer = new BYTE[0x8000];
 
 	BOOL bResult = false;
+	// MAXIMUM_ALLOWED
 
 	// 프로세스를 열음
+	// MAXIMUM_ALLOWED
 	HANDLE hProcess = OpenProcess(MAXIMUM_ALLOWED, false, dwProcessId);
 	if (!hProcess) {
 		return false;
 	}
 	// 프로세스에 대한 핸들의 정보를 가져옴
 	ULONG dwLength = 0;
-	NTSTATUS status = ZwQueryInformationProcess(hProcess, ProcessHandleInformation, lpBuffer, dwBufferSize, &dwLength);
+	NTSTATUS status = ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS::SystemHandleInformation, system_handle_buffer.data(), system_handle_buffer.size(), &dwLength);
 	while (status == STATUS_INFO_LENGTH_MISMATCH) {
-		delete[] lpBuffer;
-		dwBufferSize = dwLength;
-		lpBuffer = new BYTE[dwBufferSize];
-		status = ZwQueryInformationProcess(hProcess, ProcessHandleInformation, lpBuffer, dwBufferSize, &dwLength);
+		system_handle_buffer.resize(dwLength);
+		status = ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS::SystemHandleInformation, system_handle_buffer.data(), system_handle_buffer.size(), &dwLength);
+	}
+	if (status != STATUS_SUCCESS) {
+		printf("\nZwQuerySystemInformation return:%08X GetLastError:%08X\n", status, GetLastError());
+		return false;
 	}
 
 	// 핸들리스트 루프
-	pInformation = (PPROCESS_HANDLE_SNAPSHOT_INFORMATION)lpBuffer;	
+	pInformation = (SYSTEM_HANDLE_INFORMATION*)system_handle_buffer.data();
 	for (ULONG i = 0; i < pInformation->NumberOfHandles; i++) {
-		HANDLE handle = pInformation->Handles[i].HandleValue;
+		if (pInformation->Handles[i].ProcessId != dwProcessId) continue;
 
-		DWORD dwObjectResult = 0;
-		HANDLE copyHandle = nullptr; // 복사될핸들
-		status = DuplicateHandle(hProcess, handle, GetCurrentProcess(), &copyHandle, MAXIMUM_ALLOWED, false, DUPLICATE_SAME_ACCESS);
-		
-		// 핸들정보 조회
-		status = NtQueryObject(copyHandle, ObjectNameInformation, pObject, dwObjectSize, &dwObjectResult);
-		while (status == STATUS_INFO_LENGTH_MISMATCH) {
-			delete[] pObject;
-			dwObjectSize = dwObjectResult;
-			pObject = new BYTE[dwObjectSize];
-			status = NtQueryObject(copyHandle, ObjectNameInformation, pObject, dwObjectSize, &dwObjectResult);
+		HANDLE handle = (HANDLE)pInformation->Handles[i].Handle;
+
+		// 핸들 복사
+		HANDLE copyHandle = nullptr;
+		if (!DuplicateHandle(hProcess, handle, GetCurrentProcess(), &copyHandle, MAXIMUM_ALLOWED, false, DUPLICATE_SAME_ACCESS)) {
+			continue;
 		}
+
+		// 핸들 타입 조회
+		status = NtQueryObject(copyHandle, ObjectTypeInformation, type_buffer.data(), type_buffer.size(), &dwLength);
+		while (status == STATUS_INFO_LENGTH_MISMATCH) {
+			type_buffer.resize(dwLength);
+			status = NtQueryObject(copyHandle, ObjectTypeInformation, type_buffer.data(), type_buffer.size(), &dwLength);
+		}
+		if (status != STATUS_SUCCESS)
+			continue;
+
+		PPUBLIC_OBJECT_TYPE_INFORMATION typeName = (PPUBLIC_OBJECT_TYPE_INFORMATION)type_buffer.data();
+		if (wcscmp(typeName->TypeName.Buffer, L"Event") != 0)
+			continue;
+
+		// 핸들 값 조회
+		status = NtQueryObject(copyHandle, ObjectNameInformation, name_buffer.data(), name_buffer.size(), &dwLength);
+		while (status == STATUS_INFO_LENGTH_MISMATCH) {
+			name_buffer.resize(dwLength);
+			status = NtQueryObject(copyHandle, ObjectNameInformation, name_buffer.data(), name_buffer.size(), &dwLength);
+		}
+		if (status != STATUS_SUCCESS)
+			continue;
+
 		CloseHandle(copyHandle);
-		
+
 		// 핸들의 이름을 가져옴
-		POBJECT_NAME_INFORMATION pObjectInfo = (POBJECT_NAME_INFORMATION)pObject;
-		if (pObjectInfo->Name.Length) {			
-			if (_tcsstr(pObjectInfo->Name.Buffer, sName)) {
+		POBJECT_NAME_INFORMATION pObjectInfo = (POBJECT_NAME_INFORMATION)name_buffer.data();
+		if (pObjectInfo->Name.Length) {
+			if (wcsstr(pObjectInfo->Name.Buffer, sName)) {
 				status = DuplicateHandle(hProcess, handle, GetCurrentProcess(), &copyHandle, MAXIMUM_ALLOWED, false, DUPLICATE_CLOSE_SOURCE);
 				CloseHandle(copyHandle);
+				printf("\n[%s] PID: %d Handle: %p %ws\n", GetTime().c_str(), dwProcessId, handle, pObjectInfo->Name.Buffer);
 				bResult = true;
 			}
 		}
 	}
-
-	if (lpBuffer) delete[] lpBuffer;
-	if (pObject) delete[] pObject;
 
 	CloseHandle(hProcess);
 	return bResult;
@@ -83,7 +123,9 @@ bool closeHandle(DWORD dwProcessId) {
 
 int main()
 {
-	printf("스타크래프트 멀티로더 v0.1\n");
+	EnableNTPrivilege(SE_DEBUG_NAME, SE_PRIVILEGE_ENABLED);
+
+	printf("스타크래프트 멀티로더 v0.2\n");
 
 	if (!IsElevated()) {
 		printf("관리자 권한으로 실행해주세요.\n");
@@ -108,6 +150,7 @@ int main()
 
 	ZwQueryInformationProcess = (pZwQueryInformationProcess)GetProcAddress(hNTDLL, "ZwQueryInformationProcess");
 	NtQueryObject = (pNtQueryObject)GetProcAddress(hNTDLL, "NtQueryObject");
+	ZwQuerySystemInformation = (pZwQuerySystemInformation)GetProcAddress(hNTDLL, "ZwQuerySystemInformation");
 	if (!ZwQueryInformationProcess || !NtQueryObject) {
 		Error = GetLastError();
 		printf("API 의 주소를 구할수 없습니다.\n");
@@ -134,7 +177,7 @@ int main()
 			DWORD dwProcessId;
 			GetWindowText(hWnd, Buffer, 20);
 			if (_tcscmp(Buffer, _T("Brood War")) == 0) {
-				GetWindowThreadProcessId(hWnd, &dwProcessId);				
+				GetWindowThreadProcessId(hWnd, &dwProcessId);
 				if (find(overlapPrevent.begin(), overlapPrevent.end(), dwProcessId) == overlapPrevent.end()
 					&& closeHandle(dwProcessId))
 				{
