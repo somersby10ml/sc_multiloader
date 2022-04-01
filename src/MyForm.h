@@ -146,7 +146,7 @@ namespace scmultiloader {
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(7, 15);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
-			this->ClientSize = System::Drawing::Size(422, 265);
+			this->ClientSize = System::Drawing::Size(420, 265);
 			this->Controls->Add(this->listBox1);
 			this->Controls->Add(this->btnStop);
 			this->Controls->Add(this->btnStart);
@@ -154,7 +154,6 @@ namespace scmultiloader {
 			this->Controls->Add(this->btnRun);
 			this->Font = (gcnew System::Drawing::Font(L"¸¼Àº °íµñ", 9, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
 													  static_cast<System::Byte>(129)));
-			this->FormBorderStyle = System::Windows::Forms::FormBorderStyle::FixedSingle;
 			this->Margin = System::Windows::Forms::Padding(3, 4, 3, 4);
 			this->MaximizeBox = false;
 			this->MinimizeBox = false;
@@ -163,6 +162,7 @@ namespace scmultiloader {
 			this->Text = L"StarCraft Multi-Loader v0.3";
 			this->FormClosing += gcnew System::Windows::Forms::FormClosingEventHandler(this, &MyForm::MyForm_FormClosing);
 			this->Load += gcnew System::EventHandler(this, &MyForm::MyForm_Load);
+			this->Resize += gcnew System::EventHandler(this, &MyForm::MyForm_Resize);
 			this->contextMenuStrip1->ResumeLayout(false);
 			this->ResumeLayout(false);
 			this->PerformLayout();
@@ -176,6 +176,9 @@ namespace scmultiloader {
 		pZwQueryInformationProcess ZwQueryInformationProcess = nullptr;
 		pNtQueryObject NtQueryObject = nullptr;
 		fnRtlNtStatusToDosError RtlNtStatusToDosError = nullptr;
+
+		int txtGamePathPadding = 0;
+		int listBoxMarginRight = 0;
 
 	private: System::Void MyForm_Load(System::Object^ sender, System::EventArgs^ e) {
 
@@ -197,6 +200,11 @@ namespace scmultiloader {
 			}
 			Application::Exit();
 		}
+
+		// Resize
+		txtGamePathPadding = this->Width - txtGamePath->Width;
+		listBoxMarginRight = this->Width - listBox1->Width;
+		//MessageBox::Show(listBoxMarginRight.ToString());
 
 		String^ gamePath = GetGamePath();
 		if (gamePath != nullptr)
@@ -298,6 +306,8 @@ namespace scmultiloader {
 							buffer.resize(dwLength);
 							status = ZwQueryInformationProcess(process.get(), ProcessHandleInformation, buffer.data(), buffer.size(), &dwLength);
 						}
+						if (status == STATUS_PROCESS_IS_TERMINATING)
+							continue;
 
 						if (status != ERROR_SUCCESS) {
 							std::string str = getErrorString(RtlNtStatusToDosError(status));
@@ -360,6 +370,10 @@ namespace scmultiloader {
 		isThreadStop = true;
 		if (thread != nullptr)
 			thread->Join();
+	}
+	private: System::Void MyForm_Resize(System::Object^ sender, System::EventArgs^ e) {
+		txtGamePath->Width = this->Width - txtGamePathPadding;
+		listBox1->Width = this->Width - listBoxMarginRight;
 	}
 	};
 }
